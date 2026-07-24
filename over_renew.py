@@ -119,7 +119,8 @@ def update_cronjob(target_utc: datetime.datetime):
     new_content = re.sub(
         r'(- cron:)\s*[\'"].*?[\'"]',
         f'\\1 \'{cron}\'',
-        content
+        content,
+        count=1
     )
 
     if new_content == content:

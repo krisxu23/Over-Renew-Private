@@ -3,9 +3,14 @@ name: Overnode Auto Renew
 on:
   schedule:
     - cron: '1 0 26 7 *'
+    - cron: '1 0 * * *'
   workflow_dispatch:
   repository_dispatch:
     types: [cloudflare_cron_trigger]
+
+concurrency:
+  group: renew
+  cancel-in-progress: true
 
 jobs:
   renew:
