@@ -22,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
-          pip install requests
+          pip install "requests[socks]"
 
       - name: Setup proxy (sing-box)
         env:
