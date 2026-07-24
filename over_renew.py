@@ -107,8 +107,7 @@ def update_cronjob(target_utc: datetime.datetime):
         log("⚠️ 未配置 PRIVATE_REPO_TOKEN，跳过调度更新")
         return
 
-    bj_time = target_utc + datetime.timedelta(hours=8)
-    cron = f"{bj_time.minute} {bj_time.hour} {bj_time.day} {bj_time.month} *"
+    cron = f"{target_utc.minute} {target_utc.hour} {target_utc.day} {target_utc.month} *"
 
     if not os.path.exists(WORKFLOW_PATH):
         log(f"⚠️ 未找到 {WORKFLOW_PATH}，跳过")
@@ -143,7 +142,7 @@ def update_cronjob(target_utc: datetime.datetime):
             sha = resp.json()["sha"]
 
             put_data = {
-                "message": f"chore: set cron to {bj_time.month:02d}/{bj_time.day:02d} {bj_time.hour:02d}:{bj_time.minute:02d}",
+                "message": f"chore: set cron to {target_utc.month:02d}/{target_utc.day:02d} {target_utc.hour:02d}:{target_utc.minute:02d} UTC",
                 "content": base64.b64encode(new_content.encode()).decode(),
                 "sha": sha,
                 "branch": "main",
@@ -151,7 +150,8 @@ def update_cronjob(target_utc: datetime.datetime):
 
             resp = requests.put(f"{GITHUB_API}/contents/{WORKFLOW_PATH}", json=put_data, headers=headers, timeout=10)
             if resp.status_code == 200:
-                log(f"🔁 Cron 写回成功：下次触发 {bj_time.month:02d}月{bj_time.day:02d}日 {bj_time.hour:02d}:{bj_time.minute:02d}（北京时间）")
+                bj_time = target_utc + datetime.timedelta(hours=8)
+                log(f"🔁 Cron 写回成功：下次触发 {target_utc.month:02d}月{target_utc.day:02d}日 {target_utc.hour:02d}:{target_utc.minute:02d} UTC（北京时间 {bj_time.hour:02d}:{bj_time.minute:02d}）")
                 return
             log(f"⚠️ API 更新第{attempt+1}次失败: {resp.status_code} {resp.text[:200]}")
             time.sleep(3)
