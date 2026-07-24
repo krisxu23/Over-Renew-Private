@@ -23,17 +23,28 @@ TG_TOKEN   = _tg[1].strip() if len(_tg) > 1 else ""
 IS_PROXY      = os.environ.get("IS_PROXY", "false").lower() == "true"
 PROXY_SERVER  = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1080"
 
+# 解析 SERVERS 环境变量
+# 格式: name1,id1,code1;name2,id2,code2
+# 示例: FreeZero,6348f48a,Over-US 🇺🇸;FreeOne,23e794e1,Over-FR 🇫🇷
+_servers_env = os.environ.get("SERVERS", "").strip()
+if _servers_env:
+    SERVERS = []
+    for srv_str in _servers_env.split(";"):
+        parts = [p.strip() for p in srv_str.split(",")]
+        if len(parts) == 3:
+            SERVERS.append({"name": parts[0], "id": parts[1], "code": parts[2]})
+else:
+    SERVERS = [
+        {"name": "FreeZero", "id": "6348f48a", "code": "Over-US 🇺🇸"},
+        {"name": "FreeOne",  "id": "23e794e1", "code": "Over-FR 🇫🇷"},
+    ]
+
 DISCORD_API  = "https://discord.com/api/v9"
 CLIENT_ID    = "972921155205877860"
 REDIRECT_URI = "https://console.overnode.fr/auth/discord/callback"
 GUILD_ID     = "1515897528011329657"
 SITE_URL     = "https://console.overnode.fr"
 UA           = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-
-SERVERS = [
-    {"name": "FreeZero", "id": "6348f48a", "code": "Over-US 🇺🇸"},
-    {"name": "FreeOne",  "id": "23e794e1", "code": "Over-FR 🇫🇷"},
-]
 
 # === AUTO-UPDATED ===
 LAST_RENEWED_US = "2026-07-19 21:59:25"
