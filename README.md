@@ -33,6 +33,9 @@ Overnode 免费服务器自动续期脚本，通过 Discord OAuth 登录并自�
 | `SERVERS` | 服务器列表（必填） | `MyServer,abc12345,Over-US 🇺🇸` |
 | `NODE_LINK` | 代理节点链接（可选，绕过 VPN 检测） | `vless://...`、`hysteria2://...`、`vmess://...`、`trojan://...` 等 |
 | `TG_BOT` | Telegram 推送（可选） | `123456,bot_token` |
+| `CF_API_TOKEN` | Cloudflare API Token（可选，自动更新 cron） | 见下方教程 |
+| `CF_ACCOUNT_ID` | Cloudflare 账户 ID（可选） | 见下方教程 |
+| `CF_WORKER_NAME` | Cloudflare Worker 名称（可选） | `overnode-cron` |
 
 **SERVERS 格式说明**：
 - 单服务器：`名称,ID,标识`
@@ -44,11 +47,43 @@ Overnode 免费服务器自动续期脚本，通过 Discord OAuth 登录并自�
 Server1,a1b2c3d4,Over-US 🇺🇸;Server2,e5f6g7h8,Over-FR 🇫🇷
 ```
 
-### 3️⃣ 手动测试
+### 3️⃣ 获取 Cloudflare API Token（可选，自动更新 cron）
+
+续期后脚本会自动把下次运行时间写入 Cloudflare Worker 的 Cron 触发器，无需修改 GitHub Actions schedule。
+
+#### 获取 CF_ACCOUNT_ID
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. 右侧 URL 是 `https://dash.cloudflare.com/你的账户ID`
+3. 复制这串 ID（是一串哈希值）
+
+#### 获取 CF_API_TOKEN
+
+1. 进入 [API Tokens 页面](https://dash.cloudflare.com/profile/api-tokens)
+2. 点击 **Create Token** → **Create Custom Token**
+3. 填写：
+   - **Token name**: `overnode-cron`
+   - **Permissions** → 选择：
+     - `Workers` → `Edit`
+   - **Account Resources** → 选择你的账户
+4. 点击 **Continue to summary** → **Create Token**
+5. **立即复制并保存 Token**（关闭后不可再次查看）
+
+#### 配置 Secrets
+
+回到 GitHub 仓库 **Settings → Secrets and variables → Actions**，添加：
+
+| Secret | 值 |
+|--------|-----|
+| `CF_API_TOKEN` | 上一步复制的 Token |
+| `CF_ACCOUNT_ID` | 你的 Cloudflare 账户 ID |
+| `CF_WORKER_NAME` | 你的 Worker 名称（如 `overnode-cron`） |
+
+### 4️⃣ 手动测试
 
 进入 **Actions** → **Overnode Auto Renew** → **Run workflow**
 
-### 4️⃣ 查看结果
+### 5️⃣ 查看结果
 
 在 **Actions** 页面查看运行日志
 
@@ -80,15 +115,15 @@ Server1,a1b2c3d4,Over-US 🇺🇸;Server2,e5f6g7h8,Over-FR 🇫🇷
 
 ## 📅 运行计划
 
-默认每天 UTC 00:00（北京时间 08:00）自动运行
-
-修改 `.github/workflows/over-renew.yml` 可更改运行时间
+- 续期成功后，脚本自动将下次运行时间写入 **Cloudflare Worker Cron 触发器**
+- Cloudflare 每天北京时间 08:01 额外触发一次作为保险
+- 支持手动触发（Actions → Run workflow）
 
 ---
 
 ## 📖 详细文档
 
-查看 [OVERNODE_CONFIG.md](./OVERNODE_CONFIG.md) 了解完整配置说明
+查看 Cloudflare API 文档获取更多信息
 
 ---
 
@@ -108,7 +143,6 @@ Server1,a1b2c3d4,Over-US 🇺🇸;Server2,e5f6g7h8,Over-FR 🇫🇷
 ├── .github/
 │   └── workflows/
 │       └── over-renew.yml     # GitHub Actions 配置
-├── OVERNODE_CONFIG.md         # 详细配置文档
 └── README.md                  # 本文件
 ```
 

@@ -24,6 +24,9 @@ IS_PROXY      = os.environ.get("IS_PROXY", "false").lower() == "true"
 PROXY_SERVER  = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1080"
 
 PRIVATE_REPO_TOKEN = os.environ.get("PRIVATE_REPO_TOKEN", "").strip()
+CF_API_TOKEN    = os.environ.get("CF_API_TOKEN", "").strip()
+CF_ACCOUNT_ID   = os.environ.get("CF_ACCOUNT_ID", "").strip()
+CF_WORKER_NAME  = os.environ.get("CF_WORKER_NAME", "").strip()
 
 # 解析 SERVERS 环境变量
 # 格式: name1,id1,code1;name2,id2,code2
@@ -94,67 +97,33 @@ def send_tg(lines: list):
 
 
 # ============================================================
-# 写回调度（通过 GitHub API 修改 workflow cron）
+# 写回调度（通过 Cloudflare API 修改 Worker Cron 触发器）
 # ============================================================
 
-import base64
-
-WORKFLOW_PATH = ".github/workflows/over-renew.yml"
-GITHUB_API = "https://api.github.com/repos/krisxu23/Over-Renew-Private"
+CF_API = "https://api.cloudflare.com/client/v4"
 
 def update_cronjob(target_utc: datetime.datetime):
-    if not PRIVATE_REPO_TOKEN:
-        log("⚠️ 未配置 PRIVATE_REPO_TOKEN，跳过调度更新")
+    if not CF_API_TOKEN or not CF_ACCOUNT_ID or not CF_WORKER_NAME:
+        log("⚠️ 未配置 CF_API_TOKEN / CF_ACCOUNT_ID / CF_WORKER_NAME，跳过调度更新")
         return
 
     cron = f"{target_utc.minute} {target_utc.hour} {target_utc.day} {target_utc.month} *"
 
-    if not os.path.exists(WORKFLOW_PATH):
-        log(f"⚠️ 未找到 {WORKFLOW_PATH}，跳过")
-        return
-
-    with open(WORKFLOW_PATH, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    new_content = re.sub(
-        r'(- cron:)\s*[\'"].*?[\'"]',
-        f'\\1 \'{cron}\'',
-        content,
-        count=1
-    )
-
-    if new_content == content:
-        log("⚠️ Cron 未变化，跳过更新")
-        return
-
     headers = {
-        "Authorization": f"Bearer {PRIVATE_REPO_TOKEN}",
-        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {CF_API_TOKEN}",
+        "Content-Type": "application/json",
     }
+
+    url = f"{CF_API}/accounts/{CF_ACCOUNT_ID}/workers/scripts/{CF_WORKER_NAME}/schedules"
 
     for attempt in range(3):
         try:
-            resp = requests.get(f"{GITHUB_API}/contents/{WORKFLOW_PATH}", headers=headers, timeout=10)
-            if resp.status_code != 200:
-                log(f"⚠️ 获取文件 SHA 失败: {resp.status_code}")
-                time.sleep(3)
-                continue
-
-            sha = resp.json()["sha"]
-
-            put_data = {
-                "message": f"chore: set cron to {target_utc.month:02d}/{target_utc.day:02d} {target_utc.hour:02d}:{target_utc.minute:02d} UTC",
-                "content": base64.b64encode(new_content.encode()).decode(),
-                "sha": sha,
-                "branch": "main",
-            }
-
-            resp = requests.put(f"{GITHUB_API}/contents/{WORKFLOW_PATH}", json=put_data, headers=headers, timeout=10)
+            resp = requests.put(url, json=[{"cron": cron}], headers=headers, timeout=10)
             if resp.status_code == 200:
                 bj_time = target_utc + datetime.timedelta(hours=8)
                 log(f"🔁 Cron 写回成功：下次触发 {target_utc.month:02d}月{target_utc.day:02d}日 {target_utc.hour:02d}:{target_utc.minute:02d} UTC（北京时间 {bj_time.hour:02d}:{bj_time.minute:02d}）")
                 return
-            log(f"⚠️ API 更新第{attempt+1}次失败: {resp.status_code} {resp.text[:200]}")
+            log(f"⚠️ CF API 更新第{attempt+1}次失败: {resp.status_code} {resp.text[:200]}")
             time.sleep(3)
         except Exception as e:
             log(f"⚠️ 更新第{attempt+1}次异常：{e}")
