@@ -15,22 +15,34 @@ import requests
 # ============================================================
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"].strip()
+GUILD_ID      = os.environ.get("GUILD_ID", "1268504004904615948").strip()
 
 _tg        = os.environ.get("TG_BOT", "").split(",")
 TG_CHAT_ID = _tg[0].strip() if len(_tg) > 0 else ""
 TG_TOKEN   = _tg[1].strip() if len(_tg) > 1 else ""
 
+# 解析 SERVERS 环境变量
+# 格式: name1,id1,code1;name2,id2,code2
+# 示例: FreeZero,6348f48a,Over-US 🇺🇸;FreeOne,23e794e1,Over-FR 🇫🇷
+_servers_env = os.environ.get("SERVERS", "").strip()
+if _servers_env:
+    SERVERS = []
+    for srv_str in _servers_env.split(";"):
+        parts = [p.strip() for p in srv_str.split(",")]
+        if len(parts) == 3:
+            SERVERS.append({"name": parts[0], "id": parts[1], "code": parts[2]})
+else:
+    # 默认值（如果未配置环境变量）
+    SERVERS = [
+        {"name": "FreeZero", "id": "6348f48a", "code": "Over-US 🇺🇸"},
+        {"name": "FreeOne",  "id": "23e794e1", "code": "Over-FR 🇫🇷"},
+    ]
+
 DISCORD_API  = "https://discord.com/api/v9"
 CLIENT_ID    = "972921155205877860"
 REDIRECT_URI = "https://console.overnode.fr/auth/discord/callback"
-GUILD_ID     = "1515897528011329657"
 SITE_URL     = "https://console.overnode.fr"
 UA           = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-
-SERVERS = [
-    {"name": "FreeZero", "id": "6348f48a", "code": "Over-US 🇺🇸"},
-    {"name": "FreeOne",  "id": "23e794e1", "code": "Over-FR 🇫🇷"},
-]
 
 # === AUTO-UPDATED ===
 LAST_RENEWED_US = "2026-07-19 21:59:25"
@@ -78,82 +90,6 @@ def send_tg(lines: list):
 
 
 # ============================================================
-# cron-job.org 写回调度
-# ============================================================
-
-def update_cronjob(target_utc: datetime.datetime):
-    cron_env = os.environ.get("CRON_JOB", "").strip()
-    if not cron_env or "," not in cron_env:
-        log("⚠️ 未配置 CRON_JOB，跳过写回")
-        return
-
-    api_key, job_id = [x.strip() for x in cron_env.split(",", 1)]
-    bj_time = target_utc + datetime.timedelta(hours=8)
-
-    data = {
-        "job": {
-            "schedule": {
-                "timezone":  "Asia/Shanghai",
-                "expiresAt": 0,
-                "hours":     [bj_time.hour],
-                "minutes":   [bj_time.minute],
-                "mdays":     [bj_time.day],
-                "months":    [bj_time.month],
-                "wdays":     [-1],
-            }
-        }
-    }
-
-    url     = f"https://api.cron-job.org/jobs/{job_id}"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = json.dumps(data).encode("utf-8")
-    req     = urllib.request.Request(url, data=payload, headers=headers, method="PATCH")
-
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=15):
-                log(f"🔁 Cron 写回成功：下次触发 {bj_time.month:02d}月{bj_time.day:02d}日 {bj_time.hour:02d}:{bj_time.minute:02d}（北京时间）")
-            return
-        except Exception as e:
-            log(f"⚠️ Cron 写回第{attempt+1}次失败：{e}")
-            time.sleep(5)
-
-
-def update_cronjob_delay(delay_minutes: int):
-    target = datetime.datetime.utcnow() + datetime.timedelta(minutes=delay_minutes)
-    update_cronjob(target)
-
-
-# ============================================================
-# 脚本自我重写
-# ============================================================
-
-def save_state(renewed_tags: list):
-    if not renewed_tags:
-        return
-    try:
-        with open(__file__, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        new_content = content
-        for tag in renewed_tags:
-            pattern = rf'LAST_RENEWED_{tag} = ["\'].*?["\']'
-            replacement = f'LAST_RENEWED_{tag} = "{now_str()}"'
-            new_content = re.sub(pattern, replacement, new_content)
-
-        with open(__file__, "w", encoding="utf-8") as f:
-            f.write(new_content)
-
-        if os.path.exists("private"):
-            with open("private/over_renew.py", "w", encoding="utf-8") as f:
-                f.write(new_content)
-
-        log(f"💾 Auto-Updated：{', '.join('LAST_RENEWED_' + t for t in renewed_tags)}")
-    except Exception as e:
-        log(f"⚠️ Auto-Updated 失败：{e}")
-
-
-# ============================================================
 # 创建 requests Session
 # ============================================================
 
@@ -172,40 +108,68 @@ def create_session() -> requests.Session:
 
 
 # ============================================================
-# Discord OAuth → connect.sid
+# Discord OAuth → connect.sid (带详细调试)
 # ============================================================
 
 def login_via_discord(session: requests.Session):
+    
+    # ── 调试：验证 Discord Token 是否有效 ──
+    log("🔍 验证 Discord Token...")
+    try:
+        test_resp = session.get(
+            f"{DISCORD_API}/users/@me",
+            headers={"authorization": DISCORD_TOKEN},
+            timeout=10
+        )
+        log(f"   Token 验证状态码: {test_resp.status_code}")
+        if test_resp.status_code == 200:
+            user_data = test_resp.json()
+            username = user_data.get('username', 'Unknown')
+            user_id = user_data.get('id', 'Unknown')
+            log(f"   ✅ Token 有效，用户: {username} (ID: {user_id})")
+        else:
+            log(f"   ❌ Token 无效，响应: {test_resp.text[:200]}")
+            raise RuntimeError("Discord Token 验证失败")
+    except Exception as e:
+        log(f"   ❌ Token 验证异常: {e}")
+        raise
 
     # ── 步骤1：访问 /auth/discord/login 拿服务端生成的 State ──
-    log("🔗 开始获取 State...")
+    log("🔗 步骤1: 获取 State...")
     resp = session.get(
         f"{SITE_URL}/auth/discord/login",
         headers={"accept": "text/html,*/*"},
         allow_redirects=False,
         timeout=20,
     )
+    log(f"   状态码: {resp.status_code}")
 
     location = resp.headers.get("location", "")
+    log(f"   Location: {location[:100]}...")
+    
     state = None
-
     if location and "discord.com" in location:
         parsed = urllib.parse.urlparse(location)
         qs     = urllib.parse.parse_qs(parsed.query)
         state  = qs.get("state", [None])[0]
-        log("✅ 获取 State 成功")
+        log(f"   ✅ State: {state[:20]}...")
     else:
-        raise RuntimeError(f"❌ /auth/discord/login 未返回 Discord 重定向，location: '{location}'，status: {resp.status_code}")
+        raise RuntimeError(f"未获取到 Discord 重定向，location: '{location}'")
 
     # ── 步骤2：用 Discord Token 授权，拿 Code ──
+    log("🎫 步骤2: Discord OAuth 授权...")
     redirect_uri_encoded = urllib.parse.quote(REDIRECT_URI, safe="")
-    resp = session.post(
+    oauth_url = (
         f"{DISCORD_API}/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
         f"&response_type=code"
         f"&redirect_uri={redirect_uri_encoded}"
         f"&scope=identify%20email%20guilds.join"
-        f"&state={state}",
+        f"&state={state}"
+    )
+    
+    resp = session.post(
+        oauth_url,
         json={
             "guild_id":         GUILD_ID,
             "permissions":      "0",
@@ -233,25 +197,33 @@ def login_via_discord(session: requests.Session):
         },
         timeout=20,
     )
-
+    
+    log(f"   状态码: {resp.status_code}")
+    
     if resp.status_code == 401:
-        raise RuntimeError("❌ Discord Token 无效或已过期")
+        log(f"   ❌ 响应: {resp.text[:300]}")
+        raise RuntimeError("Discord Token 无效或已过期")
     if resp.status_code == 429:
-        raise RuntimeError("❌ Discord API 频率限制（Rate Limit）")
+        log(f"   ❌ 频率限制: {resp.text[:300]}")
+        raise RuntimeError("Discord API 频率限制（Rate Limit）")
     if resp.status_code != 200:
-        raise RuntimeError(f"❌ Discord OAuth 响应码: {resp.status_code}")
+        log(f"   ❌ 响应: {resp.text[:300]}")
+        raise RuntimeError(f"Discord OAuth 响应码: {resp.status_code}")
 
     location = resp.json().get("location", "")
+    log(f"   Callback Location: {location[:100]}...")
+    
     if not location:
-        raise RuntimeError("❌ 无法从 OAuth 响应中提取 Redirect Location")
+        log(f"   ❌ 完整响应: {resp.text[:500]}")
+        raise RuntimeError("无法从 OAuth 响应中提取 Redirect Location")
 
     code = urllib.parse.parse_qs(urllib.parse.urlparse(location).query).get("code", [None])[0]
     if not code:
-        raise RuntimeError("❌ 无法从 Redirect URL 提取 Code")
-    log("🎫 获取 OAuth Code 成功")
+        raise RuntimeError("无法从 Redirect URL 提取 Code")
+    log(f"   ✅ Code: {code[:20]}...")
 
     # ── 步骤3：Callback → 获取 connect.sid ──
-    log("🔄 Callback 换取 Session...")
+    log("🔄 步骤3: Callback 换取 Session...")
     cb_resp = session.get(
         f"{REDIRECT_URI}?code={code}&state={state}",
         headers={
@@ -261,22 +233,39 @@ def login_via_discord(session: requests.Session):
         allow_redirects=True,
         timeout=20,
     )
+    
+    log(f"   最终 URL: {cb_resp.url}")
+    log(f"   状态码: {cb_resp.status_code}")
+    
+    # ── 调试：打印所有 Cookies ──
+    log("🍪 当前所有 Cookies:")
+    for cookie in session.cookies:
+        value_preview = cookie.value[:30] + "..." if len(cookie.value) > 30 else cookie.value
+        log(f"   {cookie.name} = {value_preview}")
+        log(f"      domain: {cookie.domain}, path: {cookie.path}, secure: {cookie.secure}")
 
     sid = session.cookies.get("connect.sid")
     if not sid:
-        all_cookies = {c.name: c.value for c in session.cookies}
-        verify = session.get(f"{SITE_URL}/api/user", timeout=10)
-        if verify.status_code == 200 and verify.json().get("username"):
-            log("🍪 Connect.Sid 已获取")
-            return
-        raise RuntimeError(f"❌ 未获取到 connect.sid，最终 URL: {cb_resp.url}，Cookie: {list(all_cookies.keys())}")
-
-    log("🍪 Connect.Sid 已获取")
-
-    # 验证登录
+        log("   ⚠️ 未找到 connect.sid，尝试验证登录状态...")
+    
+    # ── 步骤4：验证登录 ──
+    log("✅ 步骤4: 验证登录状态...")
     verify = session.get(f"{SITE_URL}/api/user", timeout=10)
-    if verify.status_code != 200:
-        raise RuntimeError(f"❌ 登录验证失败，/api/user 返回: {verify.status_code}")
+    log(f"   /api/user 状态码: {verify.status_code}")
+    
+    if verify.status_code == 200:
+        user_info = verify.json()
+        log(f"   ✅ 登录成功！用户: {user_info.get('username', 'Unknown')}")
+    else:
+        log(f"   ❌ 登录验证失败")
+        log(f"   响应头: {dict(verify.headers)}")
+        log(f"   响应体: {verify.text[:500]}")
+        
+        # 额外调试：检查响应是否要求重定向
+        if verify.status_code in [301, 302, 303, 307, 308]:
+            log(f"   重定向到: {verify.headers.get('location', 'N/A')}")
+        
+        raise RuntimeError(f"登录验证失败，/api/user 返回: {verify.status_code}")
 
 
 # ============================================================
@@ -311,7 +300,7 @@ def do_renew(session: requests.Session, sid: str) -> dict:
 def run():
     server_names = " | ".join(s["code"] for s in SERVERS)
     log("=" * 50)
-    log(f"🎮 Over-Renew 启动")
+    log(f"🎮 Over-Renew 启动（调试版本）")
     log(f"🕐 运行时间: {now_str()}")
     log(f"🖥 服务器: {server_names}")
     log("=" * 50)
@@ -334,122 +323,16 @@ def run():
         login_via_discord(session)
     except Exception as e:
         log(f"❌ 登录失败：{e}")
-        update_cronjob_delay(30)
         send_tg([
-            "🎮 Over 续期通知",
+            "🎮 Over 续期通知（调试）",
             f"🕐 运行时间: {now_str()}",
             f"🖥 服务器: {server_names}",
-            "❌ 登录失败，30分钟后重试",
+            "❌ 登录失败",
             f"📝 {e}",
         ])
         return
 
     log("✅ Discord OAuth 登录完成")
-    log("=" * 50)
-
-    # ── 收集每台服务器的续期结果 ──
-    srv_results = []   # {"code", "renewed", "remaining_str", "next_dt", "error"}
-
-    for srv in SERVERS:
-        code = srv["code"]
-        sid  = srv["id"]
-        tag  = "US" if "US" in code else "FR"
-        log(f"── {code} ──")
-        log("🔄 执行续期...")
-
-        try:
-            data    = do_renew(session, sid)
-            renewal = data.get("renewalData", {})
-
-            next_renewal_at = renewal.get("nextRenewalAt", "")
-            renew_count     = renewal.get("renewalCount", 0)
-            remaining_sec   = renewal.get("timeRemaining", {}).get("totalSeconds", 0)
-            remaining_str   = fmt_remaining(remaining_sec)
-            next_dt         = parse_dt(next_renewal_at) if next_renewal_at else None
-
-            if data.get("message") == "Server renewed successfully":
-                log(f"✅ 续期成功")
-                log(f"📅 利用期限: {remaining_str}")
-                if next_dt:
-                    bj = next_dt + datetime.timedelta(hours=8)
-                    log(f"🔁 下次续期: {bj.strftime('%m月%d日 %H:%M')}（北京时间）")
-                srv_results.append({
-                    "code": code, "tag": tag, "renewed": True,
-                    "remaining_str": remaining_str, "next_dt": next_dt, "error": None,
-                })
-            else:
-                log(f"⏳ 期限未至")
-                log(f"📅 利用期限: {remaining_str}")
-                if next_dt:
-                    bj = next_dt + datetime.timedelta(hours=8)
-                    log(f"🔁 下次续期: {bj.strftime('%m月%d日 %H:%M')}（北京时间）")
-                srv_results.append({
-                    "code": code, "tag": tag, "renewed": False,
-                    "remaining_str": remaining_str, "next_dt": next_dt, "error": None,
-                })
-
-        except Exception as e:
-            log(f"❌ 续期失败：{e}")
-            srv_results.append({
-                "code": code, "tag": tag, "renewed": False,
-                "remaining_str": "N/A", "next_dt": None, "error": str(e),
-            })
-
-    # ── 写回 cron-job 逻辑 ──
-    # 收集有效的 next_dt
-    valid = [r for r in srv_results if r["next_dt"] is not None]
-
-    if not valid:
-        update_cronjob_delay(30)
-    elif len(valid) == 1:
-        earliest = valid[0]["next_dt"]
-        if earliest <= datetime.datetime.utcnow():
-            update_cronjob_delay(30)
-        else:
-            update_cronjob(earliest)
-    else:
-        # 按 next_dt 排序
-        valid.sort(key=lambda r: r["next_dt"])
-        first_dt  = valid[0]["next_dt"]
-        second_dt = valid[1]["next_dt"]
-        diff_sec  = (second_dt - first_dt).total_seconds()
-
-        if diff_sec <= 300:
-            # 两台相差 ≤5分钟，写回最早那台
-            target = first_dt
-        else:
-            # 相差 >5分钟，写回第二台（先续完近的，然后等第二台）
-            target = second_dt
-
-        if target <= datetime.datetime.utcnow():
-            update_cronjob_delay(30)
-        else:
-            update_cronjob(target)
-
-    # ── 有续期成功则更新时间戳 ──
-    renewed_tags = [r["tag"] for r in srv_results if r["renewed"]]
-    if renewed_tags:
-        save_state(renewed_tags)
-
-    # ── TG 推送 ──
-    remaining_parts = " | ".join(r["remaining_str"] for r in srv_results)
-    result_parts    = []
-    for r in srv_results:
-        if r["error"]:
-            result_parts.append("❌ 续期失败")
-        elif r["renewed"]:
-            result_parts.append("✅ 续期成功")
-        else:
-            result_parts.append("⌛️ 期限未至")
-
-    send_tg([
-        "🎮 Over 续期通知",
-        f"🕐 运行时间: {now_str()}",
-        f"🖥 服务器: {server_names}",
-        f"📅 利用期限: {remaining_parts}",
-        f"📊 续期结果: {' | '.join(result_parts)}",
-    ])
-
     log("=" * 50)
 
 
