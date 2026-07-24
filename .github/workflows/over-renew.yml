@@ -2,7 +2,7 @@ name: Overnode Auto Renew
 
 on:
   schedule:
-    - cron: '49 2 24 7 *'
+    - cron: '1 0 26 7 *'
   workflow_dispatch:
   repository_dispatch:
     types: [cloudflare_cron_trigger]
