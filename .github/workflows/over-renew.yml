@@ -1,0 +1,35 @@
+name: Overnode Auto Renew
+
+on:
+  schedule:
+    # 每天 UTC 00:00 运行（北京时间 08:00）
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install requests
+          
+      - name: Run renewal script
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          GUILD_ID: ${{ secrets.GUILD_ID }}
+          SERVERS: ${{ secrets.SERVERS }}
+          TG_BOT: ${{ secrets.TG_BOT }}
+          CRON_JOB: ${{ secrets.CRON_JOB }}
+          GOST_PROXY: ${{ secrets.GOST_PROXY }}
+        run: |
+          python over_renew.py
