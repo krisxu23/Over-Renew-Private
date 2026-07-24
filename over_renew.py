@@ -21,9 +21,10 @@ _tg        = os.environ.get("TG_BOT", "").split(",")
 TG_CHAT_ID = _tg[0].strip() if len(_tg) > 0 else ""
 TG_TOKEN   = _tg[1].strip() if len(_tg) > 1 else ""
 
+IS_PROXY      = os.environ.get("IS_PROXY", "false").lower() == "true"
+PROXY_SERVER  = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1080"
+
 # 解析 SERVERS 环境变量
-# 格式: name1,id1,code1;name2,id2,code2
-# 示例: FreeZero,6348f48a,Over-US 🇺🇸;FreeOne,23e794e1,Over-FR 🇫🇷
 _servers_env = os.environ.get("SERVERS", "").strip()
 if _servers_env:
     SERVERS = []
@@ -32,7 +33,6 @@ if _servers_env:
         if len(parts) == 3:
             SERVERS.append({"name": parts[0], "id": parts[1], "code": parts[2]})
 else:
-    # 默认值（如果未配置环境变量）
     SERVERS = [
         {"name": "FreeZero", "id": "6348f48a", "code": "Over-US 🇺🇸"},
         {"name": "FreeOne",  "id": "23e794e1", "code": "Over-FR 🇫🇷"},
@@ -99,21 +99,20 @@ def create_session() -> requests.Session:
         "user-agent":      UA,
         "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
     })
-    if os.environ.get("GOST_PROXY"):
+    if IS_PROXY:
         session.proxies.update({
-            "http":  "http://127.0.0.1:8080",
-            "https": "http://127.0.0.1:8080",
+            "http":  PROXY_SERVER,
+            "https": PROXY_SERVER,
         })
     return session
 
 
 # ============================================================
-# Discord OAuth → connect.sid (带详细调试)
+# Discord OAuth → connect.sid
 # ============================================================
 
 def login_via_discord(session: requests.Session):
-    
-    # ── 调试：验证 Discord Token 是否有效 ──
+
     log("🔍 验证 Discord Token...")
     try:
         test_resp = session.get(
@@ -134,7 +133,6 @@ def login_via_discord(session: requests.Session):
         log(f"   ❌ Token 验证异常: {e}")
         raise
 
-    # ── 步骤1：访问 /auth/discord/login 拿服务端生成的 State ──
     log("🔗 步骤1: 获取 State...")
     resp = session.get(
         f"{SITE_URL}/auth/discord/login",
@@ -146,7 +144,7 @@ def login_via_discord(session: requests.Session):
 
     location = resp.headers.get("location", "")
     log(f"   Location: {location[:100]}...")
-    
+
     state = None
     if location and "discord.com" in location:
         parsed = urllib.parse.urlparse(location)
@@ -156,7 +154,6 @@ def login_via_discord(session: requests.Session):
     else:
         raise RuntimeError(f"未获取到 Discord 重定向，location: '{location}'")
 
-    # ── 步骤2：用 Discord Token 授权，拿 Code ──
     log("🎫 步骤2: Discord OAuth 授权...")
     redirect_uri_encoded = urllib.parse.quote(REDIRECT_URI, safe="")
     oauth_url = (
@@ -167,7 +164,7 @@ def login_via_discord(session: requests.Session):
         f"&scope=identify%20email%20guilds.join"
         f"&state={state}"
     )
-    
+
     resp = session.post(
         oauth_url,
         json={
@@ -197,9 +194,9 @@ def login_via_discord(session: requests.Session):
         },
         timeout=20,
     )
-    
+
     log(f"   状态码: {resp.status_code}")
-    
+
     if resp.status_code == 401:
         log(f"   ❌ 响应: {resp.text[:300]}")
         raise RuntimeError("Discord Token 无效或已过期")
@@ -212,7 +209,7 @@ def login_via_discord(session: requests.Session):
 
     location = resp.json().get("location", "")
     log(f"   Callback Location: {location[:100]}...")
-    
+
     if not location:
         log(f"   ❌ 完整响应: {resp.text[:500]}")
         raise RuntimeError("无法从 OAuth 响应中提取 Redirect Location")
@@ -222,7 +219,6 @@ def login_via_discord(session: requests.Session):
         raise RuntimeError("无法从 Redirect URL 提取 Code")
     log(f"   ✅ Code: {code[:20]}...")
 
-    # ── 步骤3：Callback → 获取 connect.sid ──
     log("🔄 步骤3: Callback 换取 Session...")
     cb_resp = session.get(
         f"{REDIRECT_URI}?code={code}&state={state}",
@@ -233,11 +229,10 @@ def login_via_discord(session: requests.Session):
         allow_redirects=True,
         timeout=20,
     )
-    
+
     log(f"   最终 URL: {cb_resp.url}")
     log(f"   状态码: {cb_resp.status_code}")
-    
-    # ── 调试：打印所有 Cookies ──
+
     log("🍪 当前所有 Cookies:")
     for cookie in session.cookies:
         value_preview = cookie.value[:30] + "..." if len(cookie.value) > 30 else cookie.value
@@ -247,12 +242,11 @@ def login_via_discord(session: requests.Session):
     sid = session.cookies.get("connect.sid")
     if not sid:
         log("   ⚠️ 未找到 connect.sid，尝试验证登录状态...")
-    
-    # ── 步骤4：验证登录 ──
+
     log("✅ 步骤4: 验证登录状态...")
     verify = session.get(f"{SITE_URL}/api/user", timeout=10)
     log(f"   /api/user 状态码: {verify.status_code}")
-    
+
     if verify.status_code == 200:
         user_info = verify.json()
         log(f"   ✅ 登录成功！用户: {user_info.get('username', 'Unknown')}")
@@ -260,11 +254,10 @@ def login_via_discord(session: requests.Session):
         log(f"   ❌ 登录验证失败")
         log(f"   响应头: {dict(verify.headers)}")
         log(f"   响应体: {verify.text[:500]}")
-        
-        # 额外调试：检查响应是否要求重定向
+
         if verify.status_code in [301, 302, 303, 307, 308]:
             log(f"   重定向到: {verify.headers.get('location', 'N/A')}")
-        
+
         raise RuntimeError(f"登录验证失败，/api/user 返回: {verify.status_code}")
 
 
@@ -300,14 +293,13 @@ def do_renew(session: requests.Session, sid: str) -> dict:
 def run():
     server_names = " | ".join(s["code"] for s in SERVERS)
     log("=" * 50)
-    log(f"🎮 Over-Renew 启动（调试版本）")
+    log(f"🎮 Over-Renew 启动")
     log(f"🕐 运行时间: {now_str()}")
     log(f"🖥 服务器: {server_names}")
     log("=" * 50)
 
     session = create_session()
 
-    # 验证出口 IP
     log("🌐 验证出口 IP...")
     try:
         ip_resp   = session.get("https://api.ipify.org/?format=json", timeout=10)
@@ -317,14 +309,13 @@ def run():
     except Exception as e:
         log(f"⚠️ IP 验证失败：{e}")
 
-    # Discord OAuth 登录
     log("🔑 Discord OAuth 登录...")
     try:
         login_via_discord(session)
     except Exception as e:
         log(f"❌ 登录失败：{e}")
         send_tg([
-            "🎮 Over 续期通知（调试）",
+            "🎮 Over 续期通知",
             f"🕐 运行时间: {now_str()}",
             f"🖥 服务器: {server_names}",
             "❌ 登录失败",

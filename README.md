@@ -31,6 +31,7 @@ Overnode 免费服务器自动续期脚本，通过 Discord OAuth 登录并自�
 | `DISCORD_TOKEN` | Discord Token（必填） | `MTAxxxxx.GYxxx.xxxxx` |
 | `GUILD_ID` | Discord 服务器 ID（必填） | `1268504004904615948` |
 | `SERVERS` | 服务器列表（必填） | `MyServer,abc12345,Over-US 🇺🇸` |
+| `NODE_LINK` | 代理节点链接（可选，绕过 VPN 检测） | `vless://...`、`hysteria2://...`、`vmess://...`、`trojan://...` 等 |
 | `TG_BOT` | Telegram 推送（可选） | `123456,bot_token` |
 
 **SERVERS 格式说明**：
