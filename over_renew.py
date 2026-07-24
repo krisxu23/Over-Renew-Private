@@ -138,14 +138,15 @@ def update_cronjob(target_utc: datetime.datetime):
             subprocess.run(["git", "config", "user.name", "krisxu23"],
                           capture_output=True, timeout=10)
             subprocess.run(["git", "add", WORKFLOW_PATH], capture_output=True, timeout=10)
-            subprocess.run(["git", "commit", "-m",
+            subprocess.run(["git", "commit", "--allow-empty", "-m",
                           f"chore: set cron to {bj_time.month:02d}/{bj_time.day:02d} {bj_time.hour:02d}:{bj_time.minute:02d}"],
                           capture_output=True, timeout=10)
-            subprocess.run(["git", "remote", "set-url", "origin", repo_url],
-                          capture_output=True, timeout=10)
 
-            result = subprocess.run(["git", "push", "origin", "main"],
-                                   capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                ["git", "push", repo_url, "HEAD:main"],
+                capture_output=True, text=True, timeout=30,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            )
             if result.returncode == 0:
                 log(f"🔁 Cron 写回成功：下次触发 {bj_time.month:02d}月{bj_time.day:02d}日 {bj_time.hour:02d}:{bj_time.minute:02d}（北京时间）")
                 return
