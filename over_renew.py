@@ -97,10 +97,12 @@ def send_tg(lines: list):
 # 写回调度（通过 GitHub API 修改 workflow cron）
 # ============================================================
 
+import base64
+
 WORKFLOW_PATH = ".github/workflows/over-renew.yml"
+GITHUB_API = "https://api.github.com/repos/krisxu23/Over-Renew-Private"
 
 def update_cronjob(target_utc: datetime.datetime):
-    global PRIVATE_REPO_TOKEN
     if not PRIVATE_REPO_TOKEN:
         log("⚠️ 未配置 PRIVATE_REPO_TOKEN，跳过调度更新")
         return
@@ -125,32 +127,33 @@ def update_cronjob(target_utc: datetime.datetime):
         log("⚠️ Cron 未变化，跳过更新")
         return
 
-    with open(WORKFLOW_PATH, "w", encoding="utf-8") as f:
-        f.write(new_content)
-
-    import subprocess
-    repo_url = f"https://krisxu23:{PRIVATE_REPO_TOKEN}@github.com/krisxu23/Over-Renew-Private.git"
+    headers = {
+        "Authorization": f"Bearer {PRIVATE_REPO_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
 
     for attempt in range(3):
         try:
-            subprocess.run(["git", "config", "user.email", "krisxu23@users.noreply.github.com"],
-                          capture_output=True, timeout=10)
-            subprocess.run(["git", "config", "user.name", "krisxu23"],
-                          capture_output=True, timeout=10)
-            subprocess.run(["git", "add", WORKFLOW_PATH], capture_output=True, timeout=10)
-            subprocess.run(["git", "commit", "--allow-empty", "-m",
-                          f"chore: set cron to {bj_time.month:02d}/{bj_time.day:02d} {bj_time.hour:02d}:{bj_time.minute:02d}"],
-                          capture_output=True, timeout=10)
+            resp = requests.get(f"{GITHUB_API}/contents/{WORKFLOW_PATH}", headers=headers, timeout=10)
+            if resp.status_code != 200:
+                log(f"⚠️ 获取文件 SHA 失败: {resp.status_code}")
+                time.sleep(3)
+                continue
 
-            result = subprocess.run(
-                ["git", "push", repo_url, "HEAD:main"],
-                capture_output=True, text=True, timeout=30,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            )
-            if result.returncode == 0:
+            sha = resp.json()["sha"]
+
+            put_data = {
+                "message": f"chore: set cron to {bj_time.month:02d}/{bj_time.day:02d} {bj_time.hour:02d}:{bj_time.minute:02d}",
+                "content": base64.b64encode(new_content.encode()).decode(),
+                "sha": sha,
+                "branch": "main",
+            }
+
+            resp = requests.put(f"{GITHUB_API}/contents/{WORKFLOW_PATH}", json=put_data, headers=headers, timeout=10)
+            if resp.status_code == 200:
                 log(f"🔁 Cron 写回成功：下次触发 {bj_time.month:02d}月{bj_time.day:02d}日 {bj_time.hour:02d}:{bj_time.minute:02d}（北京时间）")
                 return
-            log(f"⚠️ 推送第{attempt+1}次失败：{result.stderr.strip()}")
+            log(f"⚠️ API 更新第{attempt+1}次失败: {resp.status_code} {resp.text[:200]}")
             time.sleep(3)
         except Exception as e:
             log(f"⚠️ 更新第{attempt+1}次异常：{e}")
