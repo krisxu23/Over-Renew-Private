@@ -30,13 +30,19 @@ jobs:
         run: |
           bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
+      - name: Configure git for push
+        run: |
+          git config user.email "krisxu23@users.noreply.github.com"
+          git config user.name "krisxu23"
+          git checkout main
+
       - name: Run renewal script
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           GUILD_ID: ${{ secrets.GUILD_ID }}
           SERVERS: ${{ secrets.SERVERS }}
           TG_BOT: ${{ secrets.TG_BOT }}
-          CRON_JOB: ${{ secrets.CRON_JOB }}
+          PRIVATE_REPO_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           IS_PROXY: ${{ env.IS_PROXY }}
           PROXY_SERVER: ${{ env.PROXY_SERVER }}
         run: |

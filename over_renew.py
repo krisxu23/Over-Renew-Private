@@ -23,6 +23,8 @@ TG_TOKEN   = _tg[1].strip() if len(_tg) > 1 else ""
 IS_PROXY      = os.environ.get("IS_PROXY", "false").lower() == "true"
 PROXY_SERVER  = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1080"
 
+PRIVATE_REPO_TOKEN = os.environ.get("PRIVATE_REPO_TOKEN", "").strip()
+
 # 解析 SERVERS 环境变量
 # 格式: name1,id1,code1;name2,id2,code2
 # 示例: FreeZero,6348f48a,Over-US 🇺🇸;FreeOne,23e794e1,Over-FR 🇫🇷
@@ -92,45 +94,66 @@ def send_tg(lines: list):
 
 
 # ============================================================
-# cron-job.org 写回调度
+# 写回调度（通过 GitHub API 修改 workflow cron）
 # ============================================================
 
+WORKFLOW_PATH = ".github/workflows/over-renew.yml"
+
 def update_cronjob(target_utc: datetime.datetime):
-    cron_env = os.environ.get("CRON_JOB", "").strip()
-    if not cron_env or "," not in cron_env:
-        log("⚠️ 未配置 CRON_JOB，跳过写回")
+    global PRIVATE_REPO_TOKEN
+    if not PRIVATE_REPO_TOKEN:
+        log("⚠️ 未配置 PRIVATE_REPO_TOKEN，跳过调度更新")
         return
 
-    api_key, job_id = [x.strip() for x in cron_env.split(",", 1)]
     bj_time = target_utc + datetime.timedelta(hours=8)
+    cron = f"{bj_time.minute} {bj_time.hour} {bj_time.day} {bj_time.month} *"
 
-    data = {
-        "job": {
-            "schedule": {
-                "timezone":  "Asia/Shanghai",
-                "expiresAt": 0,
-                "hours":     [bj_time.hour],
-                "minutes":   [bj_time.minute],
-                "mdays":     [bj_time.day],
-                "months":    [bj_time.month],
-                "wdays":     [-1],
-            }
-        }
-    }
+    if not os.path.exists(WORKFLOW_PATH):
+        log(f"⚠️ 未找到 {WORKFLOW_PATH}，跳过")
+        return
 
-    url     = f"https://api.cron-job.org/jobs/{job_id}"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = json.dumps(data).encode("utf-8")
-    req     = urllib.request.Request(url, data=payload, headers=headers, method="PATCH")
+    with open(WORKFLOW_PATH, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    new_content = re.sub(
+        r'(- cron:)\s*[\'"].*?[\'"]',
+        f'\\1 \'{cron}\'',
+        content
+    )
+
+    if new_content == content:
+        log("⚠️ Cron 未变化，跳过更新")
+        return
+
+    with open(WORKFLOW_PATH, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+    import subprocess
+    repo_url = f"https://krisxu23:{PRIVATE_REPO_TOKEN}@github.com/krisxu23/Over-Renew-Private.git"
 
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=15):
+            subprocess.run(["git", "config", "user.email", "krisxu23@users.noreply.github.com"],
+                          capture_output=True, timeout=10)
+            subprocess.run(["git", "config", "user.name", "krisxu23"],
+                          capture_output=True, timeout=10)
+            subprocess.run(["git", "add", WORKFLOW_PATH], capture_output=True, timeout=10)
+            subprocess.run(["git", "commit", "-m",
+                          f"chore: set cron to {bj_time.month:02d}/{bj_time.day:02d} {bj_time.hour:02d}:{bj_time.minute:02d}"],
+                          capture_output=True, timeout=10)
+            subprocess.run(["git", "remote", "set-url", "origin", repo_url],
+                          capture_output=True, timeout=10)
+
+            result = subprocess.run(["git", "push", "origin", "main"],
+                                   capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
                 log(f"🔁 Cron 写回成功：下次触发 {bj_time.month:02d}月{bj_time.day:02d}日 {bj_time.hour:02d}:{bj_time.minute:02d}（北京时间）")
-            return
+                return
+            log(f"⚠️ 推送第{attempt+1}次失败：{result.stderr.strip()}")
+            time.sleep(3)
         except Exception as e:
-            log(f"⚠️ Cron 写回第{attempt+1}次失败：{e}")
-            time.sleep(5)
+            log(f"⚠️ 更新第{attempt+1}次异常：{e}")
+            time.sleep(3)
 
 
 def update_cronjob_delay(delay_minutes: int):
